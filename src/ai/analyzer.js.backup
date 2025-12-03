@@ -1,0 +1,186 @@
+import axios from 'axios';
+import { config } from '../config.js';
+import { buildAnalysisPrompt } from './prompts.js';
+
+export async function analyzeWithAI(deal, signals) {
+  const prompt = buildAnalysisPrompt(deal, signals);
+  
+  try {
+    const response = await callAIModel(prompt);
+    return parseAIResponse(response);
+    
+  } catch (error) {
+    console.warn(`  ⚠️  AI analysis error: ${error.message}`);
+    // Fallback to rule-based analysis
+    return fallbackAnalysis(deal, signals);
+  }
+}
+
+async function callAIModel(prompt) {
+  if (!config.ai.apiKey) {
+    throw new Error('AI API key not configured - using fallback analysis');
+  }
+  
+  try {
+    // Using OpenRouter for access to Claude 3.5 Sonnet
+    // Can be replaced with direct Anthropic/OpenAI or Agent.ai integration
+    const response = await axios.post(
+      'https://openrouter.ai/api/v1/chat/completions',
+      {
+        model: config.ai.model || 'anthropic/claude-3.5-sonnet',
+        messages: [
+          {
+            role: 'user',
+            content: prompt + '\n\nIMPORTANT: Return ONLY valid JSON in the exact format specified. No markdown, no code blocks, just the JSON object.'
+          }
+        ],
+        temperature: 0.7,
+        max_tokens: 1000
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${config.ai.apiKey}`,
+          'Content-Type': 'application/json',
+          'HTTP-Referer': 'https://reviveiq.app',
+          'X-Title': 'ReviveIQ'
+        },
+        timeout: 30000 // 30 second timeout
+      }
+    );
+    
+    const content = response.data.choices[0].message.content;
+    
+    // Try to parse JSON, handling markdown code blocks if present
+    let jsonContent = content.trim();
+    if (jsonContent.startsWith('```')) {
+      jsonContent = jsonContent.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+    }
+    
+    return JSON.parse(jsonContent);
+    
+  } catch (error) {
+    if (error.response?.status === 401) {
+      throw new Error('Invalid AI API key');
+    } else if (error.response?.status === 429) {
+      throw new Error('AI API rate limit exceeded');
+    } else if (error.code === 'ECONNABORTED') {
+      throw new Error('AI API timeout');
+    }
+    throw new Error(`AI API error: ${error.message}`);
+  }
+}
+
+function parseAIResponse(response) {
+  // Validate and parse AI response into structured format
+  return {
+    confidence_score: parseInt(response.confidence_score) || 7,
+    summary: response.summary || 'Revival opportunity detected based on signals.',
+    email_draft: response.email_draft || '',
+    talking_points: Array.isArray(response.talking_points) ? response.talking_points : []
+  };
+}
+
+function fallbackAnalysis(deal, signals) {
+  // Enhanced rule-based fallback when AI is unavailable
+  const avgStrength = signals.reduce((sum, s) => sum + s.strength, 0) / signals.length;
+  const confidence = Math.min(10, Math.round(avgStrength + 1));
+  
+  const signalDescriptions = signals.map(s => s.description).join('; ');
+  const monthsSince = getMonthsSince(deal.closeDate);
+  
+  // Generate smarter summary based on signal types
+  const signalTypes = signals.map(s => s.type);
+  let summary = '';
+  
+  if (signalTypes.includes('FUNDING')) {
+    summary = `Strong revival candidate. ${deal.companyName} has secured funding, addressing the previous "${deal.lostReason}" concern. ${signals.length > 1 ? 'Additional signals strengthen the case.' : ''}`;
+  } else if (signalTypes.includes('LEADERSHIP_CHANGE')) {
+    summary = `Good opportunity to reconnect. New leadership at ${deal.companyName} may bring fresh vendor evaluations and budget priorities.`;
+  } else if (signalTypes.includes('ANNUAL_TIMING')) {
+    summary = `Timing-based opportunity. It's been ${monthsSince} months since the deal closed. Annual budget cycles and contract renewals make this a natural time to reconnect.`;
+  } else {
+    summary = `${deal.companyName} shows ${signals.length} revival signal(s): ${signalDescriptions}. These changes suggest improved likelihood of conversion.`;
+  }
+  
+  return {
+    confidence_score: confidence,
+    summary: summary,
+    email_draft: generateEnhancedEmail(deal, signals),
+    talking_points: generateTalkingPoints(deal, signals)
+  };
+}
+
+function generateEnhancedEmail(deal, signals) {
+  const primarySignal = signals[0];
+  const monthsSince = getMonthsSince(deal.closeDate);
+  const firstName = deal.contactName?.split(' ')[0] || 'there';
+  
+  // Customize email based on signal type
+  if (primarySignal.type === 'FUNDING') {
+    return `Subject: Congrats on the funding round!
+
+Hi ${firstName},
+
+I saw the news about ${deal.companyName}'s recent funding — congratulations! That's a huge milestone.
+
+When we last spoke ${monthsSince} months ago, ${deal.lostReason.toLowerCase()}. Given your growth trajectory and fresh capital, I'd love to revisit how we might help ${deal.companyName} scale efficiently.
+
+Would you have 15 minutes this week for a quick catch-up?
+
+Best regards`;
+  } else if (primarySignal.type === 'LEADERSHIP_CHANGE') {
+    return `Subject: Welcome to ${deal.companyName}!
+
+Hi ${firstName},
+
+I noticed you recently joined ${deal.companyName} — welcome! 
+
+We previously worked with your team on evaluating our solution. As you're getting up to speed, I'd be happy to share context about ${deal.companyName}'s needs and what we learned. No pitch — just helpful background.
+
+Worth a brief call?
+
+Best regards`;
+  } else {
+    return `Subject: Following up on ${deal.companyName}
+
+Hi ${firstName},
+
+I wanted to reach out following some recent developments at ${deal.companyName}.
+
+${primarySignal.description}
+
+When we last spoke ${monthsSince} months ago, ${deal.lostReason.toLowerCase()}. Given these changes, I thought it might be worth reconnecting to explore if the timing is better now.
+
+Would you have 15 minutes this week for a quick call?
+
+Best regards`;
+  }
+}
+
+function generateTalkingPoints(deal, signals) {
+  const points = [];
+  const primarySignal = signals[0];
+  
+  // Signal-specific talking point
+  if (primarySignal.type === 'FUNDING') {
+    points.push(`Congratulate on recent funding and ask about growth plans`);
+  } else if (primarySignal.type === 'LEADERSHIP_CHANGE') {
+    points.push(`Welcome new leader and offer context from previous discussions`);
+  } else if (primarySignal.type === 'HIRING') {
+    points.push(`Reference hiring surge as indicator of growth and needs`);
+  } else {
+    points.push(`Reference the ${primarySignal.type.toLowerCase().replace('_', ' ')} signal naturally`);
+  }
+  
+  // Address original objection
+  points.push(`Address original concern: "${deal.lostReason}" - has situation changed?`);
+  
+  // Call to action
+  points.push(`Propose low-commitment next step: quick 15-minute sync call`);
+  
+  return points;
+}
+
+function getMonthsSince(date) {
+  return Math.round((Date.now() - date.getTime()) / (1000 * 60 * 60 * 24 * 30));
+}
