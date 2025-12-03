@@ -476,4 +476,6 @@ Special thanks to the open-source community for supporting innovation in sales t
 
 *Built for modern B2B sales teams who refuse to leave money on the table*
 
+Built with ❤️ by **Himanshu Soni — aka h30s**
+
 </div>
