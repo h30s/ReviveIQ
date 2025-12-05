@@ -2,7 +2,7 @@
 
 # 🔥 ReviveIQ
 
-### AI-Powered Dead Deal Resurrection for HubSpot
+### AI-Powered Dead Deal Resurrection
 
 **Never lose a deal to bad timing again.**
 
