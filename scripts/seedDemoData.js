@@ -5,7 +5,6 @@ dotenv.config();
 const HUBSPOT_TOKEN = process.env.HUBSPOT_ACCESS_TOKEN;
 const HUBSPOT_BASE_URL = 'https://api.hubapi.com';
 
-// Sample deals with realistic data
 const DEMO_DEALS = [
     {
         dealname: 'Stripe - Enterprise Platform Integration',
